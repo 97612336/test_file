@@ -49,8 +49,12 @@ def guess_charset(msg):
     if charset is None:
         content_type = msg.get('Content-Type', '').lower()
         pos = content_type.find('charset=')
+        print(pos)
         if pos >= 0:
             charset = content_type[pos + 8:].strip()
+        if charset == 'utf-8; format=flowed':
+            charset = 'utf-8'
+        print(charset)
     return charset
 
 
@@ -59,27 +63,30 @@ def print_info(one_list, msg, indent=0):
     tmp = {}
     # 如果索引是0的话,就代表是在刚开始解析,就可以获取头信息
     if indent == 0:
+        tmp01 = {}
         # 邮件请求头
         from_email = msg.get("From")
         from_email_tmp = parseaddr(from_email)
         # 发送的邮件地址
         sender = from_email_tmp[1]
-        tmp["sender"] = sender
+        tmp01["sender"] = sender
         # 发件人的别名
         sender_alias = decode_str(from_email_tmp[0])
-        tmp["sender_alias"] = sender_alias
+        tmp01["sender_alias"] = sender_alias
         # 这是邮件主题
         subject = msg.get("Subject")
         subject = decode_str(subject)
-        tmp['subject'] = subject
+        tmp01['subject'] = subject
         # 邮件的收件人
         receiver = msg.get("To")
         receiver_tmp = parseaddr(receiver)
         # 接收的邮件地址
         receiver = receiver_tmp[1]
-        tmp['receiver'] = receiver
+        tmp01['receiver'] = receiver
         receiver_alias = decode_str(receiver_tmp[0])
-        tmp["receiver_alias"] = receiver_alias
+        tmp01["receiver_alias"] = receiver_alias
+        tmp['data'] = tmp01
+        tmp['type'] = "header"
     # 如果这个信息是message类型,就递归遍历
     if (msg.is_multipart()):
         parts = msg.get_payload()
@@ -93,44 +100,64 @@ def print_info(one_list, msg, indent=0):
             content = msg.get_payload(decode=True)
             charset = guess_charset(msg)
             if charset:
-                content = content.decode(charset)
+                content = content.decode(charset, "ignore")
             tmp['content'] = content
+            if content_type == 'text/plain':
+                tmp['type'] = "text"
+            else:
+                tmp['type'] = 'html'
         # 否则的话就不显示打印
         else:
+            tmp03 = {}
             name_tmp = msg.get("Content-Type", "")
             name = "暂无数据"
             if "name" in name_tmp:
                 name = str(name_tmp).split("name")[-1].split('"')[1]
-            tmp['file_name'] = name
+            tmp03['file_name'] = name
             data_type = msg.get("Content-Transfer-Encoding", "")
-            tmp["file_type"] = data_type
+            tmp03["file_type"] = data_type
             data = msg.get_payload()
-            tmp['file_data'] = data
+            tmp03['file_data'] = data
+            tmp['data'] = tmp03
+            tmp['type'] = 'file'
     one_list.append(tmp)
     return one_list
 
 
-server = get_server()
-# 返回所有邮件:
-mails = server.list()[1]
+# 获取邮箱的所有邮件
+def get_all_mails_and_length(server):
+    mails = server.list()[1]
+    length = len(mails)
+    return mails, length
 
-# 获取具体的某封邮件, 注意索引号从1开始:
-index = len(mails)
-lines = server.retr(index)[1]
 
-# lines存储了邮件的原始文本的每一行,
-# 可以获得整个邮件的原始文本:
-msg_content = b'\r\n'.join(lines).decode('utf-8')
-# 获取Message对象:
-msg = Parser().parsestr(msg_content)
+# 获取一封邮件的Message对象
+def get_msg_obj(server, index):
+    lines = server.retr(index)[1]
+    # lines存储了邮件的原始文本的每一行,
+    # 可以获得整个邮件的原始文本:
+    msg_content = b'\r\n'.join(lines).decode('utf-8', "ignore")
+    # 获取Message对象:
+    msg = Parser().parsestr(msg_content)
+    return msg
 
-one_list = []
-new_list = print_info(one_list, msg)
-print(len(new_list))
-for one in new_list:
-    print(one)
 
-# 可以根据邮件索引号直接从服务器删除邮件:
-# server.dele(index)
-# 关闭连接:
-server.quit()
+if __name__ == '__main__':
+    # 获取邮箱链接
+    server = get_server()
+    # 获取邮箱下的所有邮件
+    mails, length = get_all_mails_and_length(server)
+    # 遍历每个邮件,解析每个邮件
+    for i in range(1, length + 1):
+        # 获取每个邮件的Message对象
+        one_list = []
+        one_msg = get_msg_obj(server, i)
+        # 解析每个邮件,如果邮件出错就跳过本次循环
+        try:
+            res_list = print_info(one_list, one_msg)
+        except:
+            continue
+        for one in res_list:
+            print(one)
+    # 关闭连接:
+    server.quit()
